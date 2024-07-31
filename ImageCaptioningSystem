@@ -1,0 +1,98 @@
+# Image Captioning System 
+# Step 1: Import necessary libraries
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.applications import InceptionV3
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.models import Model
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.layers import Embedding, LSTM, Dense, add
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.layers import Input
+
+# Step 2: Load the InceptionV3 model pre-trained on ImageNet dataset
+inception_model = InceptionV3(weights='imagenet')
+model_new = Model(inception_model.input, inception_model.layers[-2].output)
+
+# Function to preprocess the image
+def preprocess_image(img_path):
+    img = image.load_img(img_path, target_size=(299, 299))
+    img = image.img_to_array(img)
+    img = np.expand_dims(img, axis=0)
+    img = tf.keras.applications.inception_v3.preprocess_input(img)
+    return img
+
+# Function to encode the image using InceptionV3
+def encode_image(img_path):
+    img = preprocess_image(img_path)
+    feature_vector = model_new.predict(img)
+    feature_vector = np.reshape(feature_vector, feature_vector.shape[1])
+    return feature_vector
+
+# Step 3: Load and preprocess the captions
+captions = ... # Load your dataset of captions here
+tokenizer = Tokenizer(num_words=5000)
+tokenizer.fit_on_texts(captions)
+vocab_size = len(tokenizer.word_index) + 1
+max_length = max(len(caption.split()) for caption in captions)
+
+# Function to map image features to captions
+def data_generator(captions, img_features, tokenizer, max_length, vocab_size, batch_size):
+    while True:
+        for i in range(0, len(captions), batch_size):
+            X1, X2, y = [], [], []
+            for j in range(i, min(i + batch_size, len(captions))):
+                caption_seq = tokenizer.texts_to_sequences([captions[j]])[0]
+                for k in range(1, len(caption_seq)):
+                    in_seq, out_seq = caption_seq[:k], caption_seq[k]
+                    in_seq = pad_sequences([in_seq], maxlen=max_length)[0]
+                    out_seq = to_categorical([out_seq], num_classes=vocab_size)[0]
+                    X1.append(img_features[j])
+                    X2.append(in_seq)
+                    y.append(out_seq)
+            yield [np.array(X1), np.array(X2)], np.array(y)
+
+# Step 4: Define the model
+inputs1 = Input(shape=(2048,))
+fe1 = Dense(256, activation='relu')(inputs1)
+inputs2 = Input(shape=(max_length,))
+se1 = Embedding(vocab_size, 256, mask_zero=True)(inputs2)
+se2 = LSTM(256)(se1)
+decoder1 = add([fe1, se2])
+decoder2 = Dense(256, activation='relu')(decoder1)
+outputs = Dense(vocab_size, activation='softmax')(decoder2)
+model = Model(inputs=[inputs1, inputs2], outputs=outputs)
+model.compile(loss='categorical_crossentropy', optimizer=Adam())
+
+# Step 5: Train the model
+epochs = 20
+batch_size = 64
+steps = len(captions) // batch_size
+img_features = ... # Load your image features here
+
+for i in range(epochs):
+    generator = data_generator(captions, img_features, tokenizer, max_length, vocab_size, batch_size)
+    model.fit(generator, epochs=1, steps_per_epoch=steps, verbose=1)
+
+# Step 6: Generate captions for a new image
+def generate_caption(model, tokenizer, photo, max_length):
+    in_text = 'startseq'
+    for i in range(max_length):
+        sequence = tokenizer.texts_to_sequences([in_text])[0]
+        sequence = pad_sequences([sequence], maxlen=max_length)
+        yhat = model.predict([photo, sequence], verbose=0)
+        yhat = np.argmax(yhat)
+        word = tokenizer.index_word[yhat]
+        if word is None:
+            break
+        in_text += ' ' + word
+        if word == 'endseq':
+            break
+    return in_text
+
+# Example usage:
+photo = encode_image('path_to_image.jpg')
+caption = generate_caption(model, tokenizer, photo, max_length)
+print(caption)
